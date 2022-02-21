@@ -21,7 +21,7 @@
 use ethereum_types::{H160, H256, H64, U256, U64};
 use jsonrpc_core::{BoxFuture, Result};
 use jsonrpc_derive::rpc;
-
+use fp_evm::ExecutionInfo;
 use crate::types::{
 	BlockNumber, Bytes, CallRequest, FeeHistory, Filter, FilterChanges, Index, Log, Receipt,
 	RichBlock, SyncStatus, Transaction, TransactionRequest, Work,
@@ -122,6 +122,11 @@ pub trait EthApi {
 	/// Call contract, returning the output data.
 	#[rpc(name = "eth_call")]
 	fn call(&self, _: CallRequest, _: Option<BlockNumber>) -> Result<Bytes>;
+
+		
+	/// Call Bundle contract, returning the output data.
+	#[rpc(name = "eth_callBundle")]
+	fn call_bundle(&self, _: Vec<CallRequest>, _: Option<BlockNumber>) -> Result<Vec<ExecutionInfo<Vec<u8>>>>;
 
 	/// Estimate gas needed for execution of given contract.
 	#[rpc(name = "eth_estimateGas")]

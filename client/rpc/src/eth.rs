@@ -31,6 +31,7 @@ use fc_rpc_core::{
 	},
 	EthApi as EthApiT, EthFilterApi as EthFilterApiT, NetApi as NetApiT, Web3Api as Web3ApiT,
 };
+use fp_evm::ExecutionInfo;
 use fp_rpc::{ConvertTransactionRuntimeApi, EthereumRuntimeRPCApi, TransactionStatus};
 use futures::{future::TryFutureExt, StreamExt};
 use jsonrpc_core::{futures::future, BoxFuture, Result};
@@ -54,7 +55,7 @@ use std::{
 	collections::BTreeMap,
 	marker::PhantomData,
 	sync::{Arc, Mutex},
-	time,
+	time, os::unix::prelude::OsStrExt,
 };
 
 use crate::overrides::OverrideHandle;
@@ -1388,6 +1389,170 @@ where
 				}
 			}
 		}
+	}
+
+
+	fn call_bundle(&self, requests: Vec<CallRequest>, number: Option<BlockNumber>) ->  Result<Vec<ExecutionInfo<Vec<u8>>>> {
+		println!("{}","---00---");
+		
+		let (id, api) = match frontier_backend_client::native_block_id::<B, C>(
+			self.client.as_ref(),
+			self.backend.as_ref(),
+			number,
+		)? {
+			Some(id) => (id, self.client.runtime_api()),
+			None => {
+				// Not mapped in the db, assume pending.
+				let id = BlockId::Hash(self.client.info().best_hash);
+				let api = pending_runtime_api(self.client.as_ref(), self.graph.as_ref())?;
+				(id, api)
+			}
+		};
+		println!("{}","---01---");
+		let api_version =
+			if let Ok(Some(api_version)) = api.api_version::<dyn EthereumRuntimeRPCApi<B>>(&id) {
+				api_version
+			} else {
+				return Err(internal_err(format!(
+					"failed to retrieve Runtime Api version"
+				)));
+			};
+
+		println!("---api_version={}---",api_version);
+		let mut ret: Vec<ExecutionInfo<Vec<u8>>> = Vec::new();
+		
+		println!("{}","---02---");
+		
+		for request in requests{
+			let CallRequest {
+				from,
+				to,
+				gas_price,
+				max_fee_per_gas,
+				max_priority_fee_per_gas,
+				gas,
+				value,
+				data,
+				nonce,
+				access_list,
+				..
+			} = request;
+
+			let gas_limit = match gas {
+				Some(amount) => amount,
+				None => {
+					let block = if api_version > 1 {
+						api.current_block(&id)
+							.map_err(|err| internal_err(format!("runtime error: {:?}", err)))?
+					} else {
+						#[allow(deprecated)]
+						let legacy_block = api.current_block_before_version_2(&id)
+							.map_err(|err| internal_err(format!("runtime error: {:?}", err)))?;
+						if let Some(block) = legacy_block {
+							Some(block.into())
+						} else {
+							None
+						}
+					};
+	
+					if let Some(block) = block {
+						block.header.gas_limit
+					} else {
+						return Err(internal_err(format!(
+							"block unavailable, cannot query gas limit"
+						)));
+					}
+				}
+			};
+
+			let data = data.map(|d| d.0).unwrap_or_default();
+			println!("{}","---10---");
+			match to {
+				Some(to) => {
+					println!("{}","---10call---");
+					let access_list = access_list.unwrap_or_default();
+					let info = api
+						.call(
+							&id,
+							from.unwrap_or_default(),
+							to,
+							data,
+							value.unwrap_or_default(),
+							gas_limit,
+							max_fee_per_gas,
+							max_priority_fee_per_gas,
+							nonce,
+							false,
+							Some(
+								access_list
+									.into_iter()
+									.map(|item| (item.address, item.storage_keys))
+									.collect(),
+							),
+						)
+						.map_err(|err| internal_err(format!("runtime error: {:?}", err)))?
+						.map_err(|err| internal_err(format!("execution fatal: {:?}", err)))?;
+
+					error_on_execution_failure(&info.exit_reason, &info.value)?;
+					ret.push(info);
+					
+					println!("{}","---11call---");
+					
+
+				}
+				None => {
+					println!("{}","---10create---");
+					// Post-london + access list support
+					let access_list = access_list.unwrap_or_default();
+					let info = api
+						.create(
+							&id,
+							from.unwrap_or_default(),
+							data,
+							value.unwrap_or_default(),
+							gas_limit,
+							max_fee_per_gas,
+							max_priority_fee_per_gas,
+							nonce,
+							false,
+							Some(
+								access_list
+									.into_iter()
+									.map(|item| (item.address, item.storage_keys))
+									.collect(),
+							),
+						)
+						.map_err(|err| internal_err(format!("runtime error: {:?}", err)))?
+						.map_err(|err| internal_err(format!("execution fatal: {:?}", err)))?;
+
+					error_on_execution_failure(&info.exit_reason, &[])?;
+					
+					let _info: ExecutionInfo<Vec<u8>> = ExecutionInfo{
+						exit_reason: info.exit_reason,
+						value:Vec::from(info.value.as_bytes()),
+						used_gas: info.used_gas,
+						logs: info.logs,
+					};
+					
+				
+					
+					ret.push(_info);
+					println!("{}","---11create---");
+
+
+				}
+			
+			}
+			
+			
+			
+
+		}
+		
+		Ok(ret)
+
+
+		
 	}
 
 	fn estimate_gas(&self, request: CallRequest, _: Option<BlockNumber>) -> Result<U256> {
