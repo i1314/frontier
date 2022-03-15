@@ -41,7 +41,6 @@ use sc_client_api::{
 	client::BlockchainEvents,
 };
 use sc_network::{ExHashT, NetworkService};
-use sc_service::NoExtension;
 use sc_transaction_pool::{ChainApi, Pool};
 use sc_transaction_pool_api::{InPoolTransaction, TransactionPool};
 use sha3::{Digest, Keccak256};
@@ -2100,9 +2099,10 @@ where
 				for txn in ethereum_transactions {
 					let inner_hash = txn.hash();
 					if hash == inner_hash {
+						let txn0 = txn.clone();
 						let tx = transaction_build(txn, None, None, true, None);
-						let call_msg : Vec<CallRequest> = Vec::new();
-						call_msg[0]=CallRequest{
+						// let mut call_msg : Vec<CallRequest> = Vec::new();
+						let call_msg= vec![CallRequest{
 							from: Some(tx.from),
 							to: tx.to,
 							gas_price: tx.gas_price,
@@ -2114,9 +2114,9 @@ where
 							nonce: Some(tx.nonce),
 							access_list: tx.access_list,
 							transaction_type:tx.transaction_type,
-						};
+						}];
 						let call_ret = self.call_bundle(call_msg,None)?;
-						let ret=TransactionAndInfo { tx: tx, info: call_ret[0] ,};
+						let ret=TransactionAndInfo { tx:transaction_build(txn0, None, None, true, None), info: call_ret[0].clone() ,};
 
 
 						return Ok(Some(ret));
