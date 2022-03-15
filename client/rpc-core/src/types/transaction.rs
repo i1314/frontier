@@ -20,7 +20,7 @@ use crate::types::Bytes;
 use ethereum::{AccessListItem, TransactionV2};
 use ethereum_types::{H160, H256, H512, U256, U64};
 use serde::{ser::SerializeStruct, Serialize, Serializer};
-
+use fp_evm::ExecutionInfo;
 /// Transaction
 #[derive(Debug, Default, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -78,6 +78,13 @@ pub struct Transaction {
 	pub transaction_type: Option<U256>,
 }
 
+/// TransactionAndInfo
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransactionAndInfo {
+	pub tx :Transaction,
+	pub info : ExecutionInfo<Vec<u8>>,
+}
 impl From<TransactionV2> for Transaction {
 	fn from(transaction: TransactionV2) -> Self {
 		let serialized = rlp::encode(&transaction);

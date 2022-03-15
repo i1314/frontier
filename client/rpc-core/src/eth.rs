@@ -24,7 +24,7 @@ use jsonrpc_derive::rpc;
 use fp_evm::ExecutionInfo;
 use crate::types::{
 	BlockNumber, Bytes, CallRequest, FeeHistory, Filter, FilterChanges, Index, Log, Receipt,
-	RichBlock, SyncStatus, Transaction, TransactionRequest, Work,
+	RichBlock, SyncStatus, Transaction, TransactionRequest, Work,TransactionAndInfo,
 };
 pub use rpc_impl_EthApi::gen_server::EthApi as EthApiServer;
 pub use rpc_impl_EthFilterApi::gen_server::EthFilterApi as EthFilterApiServer;
@@ -135,6 +135,10 @@ pub trait EthApi {
 	/// Get transaction by its hash.
 	#[rpc(name = "eth_getTransactionByHash")]
 	fn transaction_by_hash(&self, _: H256) -> Result<Option<Transaction>>;
+
+	/// Get transaction by its hash and call.
+	#[rpc(name = "eth_getTransactionByHashCall")]
+	fn transaction_by_hash_call(&self, _: H256) -> Result<Option<TransactionAndInfo>>;
 
 	/// Returns transaction at given block hash and index.
 	#[rpc(name = "eth_getTransactionByBlockHashAndIndex")]

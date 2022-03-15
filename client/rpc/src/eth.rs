@@ -27,7 +27,7 @@ use fc_rpc_core::{
 		Block, BlockNumber, BlockTransactions, Bytes, CallRequest, FeeHistory, FeeHistoryCache,
 		FeeHistoryCacheItem, Filter, FilterChanges, FilterPool, FilterPoolItem, FilterType,
 		FilteredParams, Header, Index, Log, PeerCount, Receipt, Rich, RichBlock, SyncInfo,
-		SyncStatus, Transaction, TransactionMessage, TransactionRequest, Work,
+		SyncStatus, Transaction, TransactionMessage, TransactionRequest, Work,TransactionAndInfo,
 	},
 	EthApi as EthApiT, EthFilterApi as EthFilterApiT, NetApi as NetApiT, Web3Api as Web3ApiT,
 };
@@ -41,6 +41,7 @@ use sc_client_api::{
 	client::BlockchainEvents,
 };
 use sc_network::{ExHashT, NetworkService};
+use sc_service::NoExtension;
 use sc_transaction_pool::{ChainApi, Pool};
 use sc_transaction_pool_api::{InPoolTransaction, TransactionPool};
 use sha3::{Digest, Keccak256};
@@ -79,6 +80,8 @@ pub struct EthApi<B: BlockT, C, P, CT, BE, H: ExHashT, A: ChainApi, F: Formatter
 	fee_history_cache: FeeHistoryCache,
 	_marker: PhantomData<(B, BE, F)>,
 }
+
+
 
 impl<B: BlockT, C, P, CT, BE, H: ExHashT, A: ChainApi, F> EthApi<B, C, P, CT, BE, H, A, F>
 where
@@ -1393,7 +1396,7 @@ where
 
 
 	fn call_bundle(&self, requests: Vec<CallRequest>, number: Option<BlockNumber>) ->  Result<Vec<ExecutionInfo<Vec<u8>>>> {
-		println!("{}","---00---");
+		//println!("{}","---00---");
 		
 		let (id, api) = match frontier_backend_client::native_block_id::<B, C>(
 			self.client.as_ref(),
@@ -1408,7 +1411,7 @@ where
 				(id, api)
 			}
 		};
-		println!("{}","---01---");
+		//println!("{}","---01---");
 		let api_version =
 			if let Ok(Some(api_version)) = api.api_version::<dyn EthereumRuntimeRPCApi<B>>(&id) {
 				api_version
@@ -1418,16 +1421,16 @@ where
 				)));
 			};
 
-		println!("---api_version={}---",api_version);
+		//println!("---api_version={}---",api_version);
 		let mut ret: Vec<ExecutionInfo<Vec<u8>>> = Vec::new();
 		
-		println!("{}","---02---");
+		//println!("{}","---02---");
 		
 		for request in requests{
 			let CallRequest {
 				from,
 				to,
-				gas_price,
+				gas_price: _,
 				max_fee_per_gas,
 				max_priority_fee_per_gas,
 				gas,
@@ -1466,10 +1469,10 @@ where
 			};
 
 			let data = data.map(|d| d.0).unwrap_or_default();
-			println!("{}","---10---");
+			//println!("{}","---10---");
 			match to {
 				Some(to) => {
-					println!("{}","---10call---");
+					//println!("{}","---10call---");
 					let access_list = access_list.unwrap_or_default();
 					let info = api
 						.call(
@@ -1493,15 +1496,15 @@ where
 						.map_err(|err| internal_err(format!("runtime error: {:?}", err)))?
 						.map_err(|err| internal_err(format!("execution fatal: {:?}", err)))?;
 
-					error_on_execution_failure(&info.exit_reason, &info.value)?;
+					// error_on_execution_failure(&info.exit_reason, &info.value)?;
 					ret.push(info);
 					
-					println!("{}","---11call---");
+					//println!("{}","---11call---");
 					
 
 				}
 				None => {
-					println!("{}","---10create---");
+					//println!("{}","---10create---");
 					// Post-london + access list support
 					let access_list = access_list.unwrap_or_default();
 					let info = api
@@ -1525,7 +1528,7 @@ where
 						.map_err(|err| internal_err(format!("runtime error: {:?}", err)))?
 						.map_err(|err| internal_err(format!("execution fatal: {:?}", err)))?;
 
-					error_on_execution_failure(&info.exit_reason, &[])?;
+					// error_on_execution_failure(&info.exit_reason, &[])?;
 					
 					let _info: ExecutionInfo<Vec<u8>> = ExecutionInfo{
 						exit_reason: info.exit_reason,
@@ -1537,7 +1540,7 @@ where
 				
 					
 					ret.push(_info);
-					println!("{}","---11create---");
+					//println!("{}","---11create---");
 
 
 				}
@@ -1985,6 +1988,7 @@ where
 				for txn in ethereum_transactions {
 					let inner_hash = txn.hash();
 					if hash == inner_hash {
+
 						return Ok(Some(transaction_build(txn, None, None, true, None)));
 					}
 				}
@@ -2031,6 +2035,104 @@ where
 			_ => Ok(None),
 		}
 	}
+
+	fn transaction_by_hash_call(&self, hash: H256) -> Result<Option<TransactionAndInfo>> {
+		let (hash, index) = match frontier_backend_client::load_transactions::<B, C>(
+			self.client.as_ref(),
+			self.backend.as_ref(),
+			hash,
+			true,
+		)
+		.map_err(|err| internal_err(format!("{:?}", err)))?
+		{
+			Some((hash, index)) => (hash, index as usize) ,
+			None => {
+				let api = self.client.runtime_api();
+				let best_block: BlockId<B> = BlockId::Hash(self.client.info().best_hash);
+
+				let api_version = if let Ok(Some(api_version)) =
+					api.api_version::<dyn EthereumRuntimeRPCApi<B>>(&best_block)
+				{
+					api_version
+				} else {
+					return Err(internal_err(format!(
+						"failed to retrieve Runtime Api version"
+					)));
+				};
+				// If the transaction is not yet mapped in the frontier db,
+				// check for it in the transaction pool.
+				let mut xts: Vec<<B as BlockT>::Extrinsic> = Vec::new();
+				// Collect transactions in the ready validated pool.
+				xts.extend(
+					self.graph
+						.validated_pool()
+						.ready()
+						.map(|in_pool_tx| in_pool_tx.data().clone())
+						.collect::<Vec<<B as BlockT>::Extrinsic>>(),
+				);
+
+				// Collect transactions in the future validated pool.
+				xts.extend(
+					self.graph
+						.validated_pool()
+						.futures()
+						.iter()
+						.map(|(_hash, extrinsic)| extrinsic.clone())
+						.collect::<Vec<<B as BlockT>::Extrinsic>>(),
+				);
+
+				let ethereum_transactions: Vec<EthereumTransaction> = if api_version > 1 {
+					api.extrinsic_filter(&best_block, xts).map_err(|err| {
+						internal_err(format!("fetch runtime extrinsic filter failed: {:?}", err))
+					})?
+				} else {
+					#[allow(deprecated)]
+					let legacy = api.extrinsic_filter_before_version_2(&best_block, xts)
+						.map_err(|err| {
+							internal_err(format!(
+								"fetch runtime extrinsic filter failed: {:?}",
+								err
+							))
+						})?;
+					legacy.into_iter().map(|tx| tx.into()).collect()
+				};
+
+				for txn in ethereum_transactions {
+					let inner_hash = txn.hash();
+					if hash == inner_hash {
+						let tx = transaction_build(txn, None, None, true, None);
+						let call_msg : Vec<CallRequest> = Vec::new();
+						call_msg[0]=CallRequest{
+							from: Some(tx.from),
+							to: tx.to,
+							gas_price: tx.gas_price,
+							max_fee_per_gas: tx.max_fee_per_gas,
+							max_priority_fee_per_gas: tx.max_priority_fee_per_gas,
+							gas:Some(tx.gas),
+							value: Some(tx.value),
+							data: Some(tx.input),
+							nonce: Some(tx.nonce),
+							access_list: tx.access_list,
+							transaction_type:tx.transaction_type,
+						};
+						let call_ret = self.call_bundle(call_msg,None)?;
+						let ret=TransactionAndInfo { tx: tx, info: call_ret[0] ,};
+
+
+						return Ok(Some(ret));
+					}
+				}
+				// Unknown transaction.
+				return Ok(None);
+			}
+		};
+		Ok(None)
+		
+
+		
+	}
+
+
 
 	fn transaction_by_block_hash_and_index(
 		&self,
@@ -2529,7 +2631,7 @@ where
 			newest_block
 		)))
 	}
-}
+
 
 pub struct NetApi<B: BlockT, BE, C, H: ExHashT> {
 	client: Arc<C>,
