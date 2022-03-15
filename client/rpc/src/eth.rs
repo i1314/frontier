@@ -2631,6 +2631,7 @@ where
 			newest_block
 		)))
 	}
+}
 
 
 pub struct NetApi<B: BlockT, BE, C, H: ExHashT> {
